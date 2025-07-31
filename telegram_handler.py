@@ -4,6 +4,15 @@ from google_sheets import save_contractor_report, save_worker_report
 import datetime
 import os
 from dotenv import load_dotenv
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("سلام، آماده‌ام که گزارش ثبت کنم.")
+
+def register_handlers(app):
+    app.add_handler(CommandHandler("start", start))
+    # بقیه‌ی هندلرها رو اینجا اضافه کن
 
 load_dotenv()
 
