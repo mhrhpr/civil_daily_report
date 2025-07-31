@@ -1,138 +1,52 @@
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
-from google_sheets import save_contractor_report, save_worker_report
-import datetime
-import os
-from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
+from sheets_handler import save_to_sheet
+from datetime import datetime
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام، آماده‌ام که گزارش ثبت کنم.")
+TOKEN = "8338754838:AAH6WU34i0pqL9sGr-wFOv1sshQSKVyb6Z4"
 
-def register_handlers(app):
-    app.add_handler(CommandHandler("start", start))
-    # بقیه‌ی هندلرها رو اینجا اضافه کن
-
-load_dotenv()
-
-# مراحل گفتگو
-(
-    CHOOSING_REPORT_TYPE,
-    GET_NAME,
-    GET_JOB,
-    GET_UNIT,
-    GET_UNIT_PRICE,
-    GET_QUANTITY,
-    GET_WAGE,
-    GET_OVERTIME,
-) = range(8)
+ASK_REPORT_TYPE, FILL_DATA, CONFIRM_AGAIN = range(3)
 
 user_data = {}
 
-reply_keyboard = [['کنترات', 'روزمزد']]
-markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
-
-def start(update: Update, context: CallbackContext):
+def start(update: Update, context: CallbackContext) -> int:
+    reply_keyboard = [["Contractor", "DailyWorker"]]
     update.message.reply_text(
-        "سلام! برای ثبت گزارش لطفاً نوع گزارش رو انتخاب کن:",
-        reply_markup=markup
+        "سلام! لطفا نوع گزارش امروز رو انتخاب کن:", 
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
     )
-    return CHOOSING_REPORT_TYPE
+    return ASK_REPORT_TYPE
 
-def choose_type(update: Update, context: CallbackContext):
-    report_type = update.message.text
-    user_data[update.effective_user.id] = {
-        "type": report_type,
-        "step": 0
-    }
-    update.message.reply_text("نام فرد را وارد کن:")
-    return GET_NAME
+def ask_fields(update: Update, context: CallbackContext) -> int:
+    report_type = update.message.text.lower()
+    context.user_data["report_type"] = report_type
+    context.user_data["telegram_id"] = update.effective_user.id
+    context.user_data["date"] = datetime.now().strftime("%Y-%m-%d")
 
-def get_name(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    user_data[user_id]["name"] = update.message.text
-    update.message.reply_text("شغل یا کار انجام شده؟")
-    return GET_JOB
+    update.message.reply_text("لطفا اطلاعات گزارش امروز رو به صورت زیر وارد کن:\n\n`ماده، مقدار، قیمت`")
+    return FILL_DATA
 
-def get_job(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    user_data[user_id]["job"] = update.message.text
+def get_data(update: Update, context: CallbackContext) -> int:
+    raw = update.message.text
+    try:
+        item, amount, price = raw.split(",")
+        context.user_data["item"] = item.strip()
+        context.user_data["amount"] = amount.strip()
+        context.user_data["price"] = price.strip()
+        save_to_sheet(context.user_data, context.user_data["report_type"])
+        update.message.reply_text("✅ گزارش با موفقیت ثبت شد. گزارش دیگه‌ای هست؟ (بله / خیر)")
+        return CONFIRM_AGAIN
+    except Exception as e:
+        update.message.reply_text("❌ فرمت اشتباهه. لطفا دوباره به صورت `ماده، مقدار، قیمت` وارد کن.")
+        return FILL_DATA
 
-    if user_data[user_id]["type"] == "کنترات":
-        update.message.reply_text("واحد کار (مثلاً متر، متر مربع،...)؟")
-        return GET_UNIT
-    else:
-        update.message.reply_text("دستمزد پایه چقدره؟ (تومان)")
-        return GET_WAGE
-
-# مسیر کنترات:
-def get_unit(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    user_data[user_id]["unit"] = update.message.text
-    update.message.reply_text("قیمت هر واحد چقدره؟")
-    return GET_UNIT_PRICE
-
-def get_unit_price(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    user_data[user_id]["unit_price"] = update.message.text
-    update.message.reply_text("تعداد واحد انجام شده؟")
-    return GET_QUANTITY
-
-def get_quantity(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    user_data[user_id]["quantity"] = update.message.text
-
-    data = user_data[user_id]
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    save_contractor_report(user_id, today, data["name"], data["job"], data["unit"], data["unit_price"], data["quantity"])
-
-    update.message.reply_text("✅ گزارش کنترات ثبت شد. برای گزارش جدید /start رو بزن.")
+def ask_another(update: Update, context: CallbackContext) -> int:
+    if update.message.text.lower() == "بله":
+        return start(update, context)
+    update.message.reply_text("✅ ممنون! روز خوبی داشته باشید.")
     return ConversationHandler.END
 
-# مسیر روزمزد:
-def get_wage(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    user_data[user_id]["wage"] = update.message.text
-    update.message.reply_text("میزان اضافه‌کاری؟ (مثلاً 2 ساعت)")
-    return GET_OVERTIME
-
-def get_overtime(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    user_data[user_id]["overtime"] = update.message.text
-
-    data = user_data[user_id]
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    save_worker_report(user_id, today, data["name"], data["job"], data["wage"], data["overtime"])
-
-    update.message.reply_text("✅ گزارش روزمزد ثبت شد. برای گزارش جدید /start رو بزن.")
+def cancel(update: Update, context: CallbackContext) -> int:
+    update.message.reply_text("گزارش لغو شد.")
     return ConversationHandler.END
 
-# کنسل کردن
-def cancel(update: Update, context: CallbackContext):
-    update.message.reply_text("⛔️ گزارش لغو شد. برای شروع مجدد /start رو بزن.")
-    return ConversationHandler.END
-
-def run_bot():
-    updater = Updater(os.getenv("TELEGRAM_TOKEN"))
-    dp = updater.dispatcher
-
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            CHOOSING_REPORT_TYPE: [MessageHandler(Filters.text & ~Filters.command, choose_type)],
-            GET_NAME: [MessageHandler(Filters.text & ~Filters.command, get_name)],
-            GET_JOB: [MessageHandler(Filters.text & ~Filters.command, get_job)],
-            GET_UNIT: [MessageHandler(Filters.text & ~Filters.command, get_unit)],
-            GET_UNIT_PRICE: [MessageHandler(Filters.text & ~Filters.command, get_unit_price)],
-            GET_QUANTITY: [MessageHandler(Filters.text & ~Filters.command, get_quantity)],
-            GET_WAGE: [MessageHandler(Filters.text & ~Filters.command, get_wage)],
-            GET_OVERTIME: [MessageHandler(Filters.text & ~Filters.command, get_overtime)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-    )
-
-    dp.add_handler(conv_handler)
-
-    updater.start_polling()
-    updater.idle()
